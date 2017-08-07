@@ -1,7 +1,9 @@
-#ee-training-lslp
+# ee-training-lslp
+
 Student course material for the [Lightbend Scala Language Professional](https://www.lightbend.com/services/training/lightbend-scala-language-professional) course
 
-##Course Pre-requisites
+## Course Pre-requisites
+
 We expect no prior experience with Scala, however, we expect:
 
 * Experience with Java or another object-oriented language.
@@ -10,9 +12,9 @@ We expect no prior experience with Scala, however, we expect:
 * Lightbend SBT
 * Scala IDE or IntelliJ IDEA with Scala plugin
 
-###Setup
+### Setup
 
-Please follow the [setup instructions](Setup.md) before you intend the course. If you have any questions, please post them in the #scala-language-pro channel on the EE slack.
+Please follow the [setup instructions](Setup.md) before you intend the course. The course deck is found in the zip file provided in the repo. If you have any questions, please post them in the #scala-language-pro channel on the EE slack.
 
 ## Miscellaneous
 
