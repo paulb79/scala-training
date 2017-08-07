@@ -12,7 +12,7 @@ We expect no prior experience with Scala, however, we expect:
 * Lightbend SBT
 * Scala IDE or IntelliJ IDEA with Scala plugin
 
-### Setup
+## Setup
 
 Please follow the [setup instructions](Setup.md) before you intend the course. The course deck is found in the zip file provided in the repo. If you have any questions, please post them in the #scala-language-pro channel on the EE slack.
 
