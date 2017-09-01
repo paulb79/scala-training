@@ -1,0 +1,189 @@
+#!groovy
+
+import java.text.SimpleDateFormat
+
+stage('Checkout') {
+    node {
+        try {
+            dir('__REPO__') {
+                git branch: env.BRANCH_NAME, credentialsId: '9528ba80-de43-4934-a616-a90f7aa44997', url: 'git@github.com:lightbend-training/__REPO__'
+            }
+
+            dir('__REPO__-deck') {
+                git credentialsId: '9528ba80-de43-4934-a616-a90f7aa44997', url: 'git@github.com:lightbend-training/__REPO__-deck'
+
+            }
+
+            dir('course-management-tools') {
+                git credentialsId: '9528ba80-de43-4934-a616-a90f7aa44997', url: ' git@github.com:lightbend-training/course-management-tools.git'
+            }
+
+            writeFile file: 'date', text: date()
+            stash includes: 'date', name: 'date'
+
+        } catch (e) {
+            // If there was an exception thrown, the build failed
+            currentBuild.result = "FAILED"
+            notifyBuild('Checkout', currentBuild.result)
+            throw e
+        }
+    }
+}
+
+stage("Create Release") {
+    node {
+        try {
+            def v = version().trim()
+            unstash 'date'
+            def d = readFile('date')
+            def finalVersion = env.BRANCH_NAME == 'master' ? "${v}.${d}" : v
+            withEnv(["PATH+SBT=${tool 'sbt'}/bin","PATH+GIT=${tool 'git'}/bin"]) {
+                dir('course-management-tools') {
+                    sh """
+                        ./createRelease.sh -v v${finalVersion} ${env.WORKSPACE}/__REPO__
+                        ./createRelease.sh -v v${finalVersion} ${env.WORKSPACE}/__REPO__-deck
+                    """
+                }
+            }
+
+        } catch (e) {
+            // If there was an exception thrown, the build failed
+            currentBuild.result = "FAILED"
+            notifyBuild('Create Release',currentBuild.result)
+            throw e
+        }
+    }
+}
+
+stage("Tag Release") {
+    node {
+        try {
+            def v = version().trim()
+            unstash 'date'
+            def d = readFile('date')
+            def finalVersion = env.BRANCH_NAME == 'master' ? "${v}.${d}" : v
+            withEnv(["PATH+GIT=${tool 'git'}/bin"]) {
+                dir('__REPO__') {
+                    sh """
+                        git tag -a -f v${finalVersion} -m "Jenkins build #${env.BUILD_NUMBER} on ${d}"
+                        git push --force origin v${finalVersion}
+                    """
+                }
+                dir('__REPO__-deck') {
+                    sh """
+                        git tag -a -f v${finalVersion} -m "Jenkins build #${env.BUILD_NUMBER} on ${d}"
+                        git push --force origin v${finalVersion}
+                    """
+                }
+            }
+        } catch (e) {
+            // If there was an exception thrown, the build failed
+            currentBuild.result = "FAILED"
+            notifyBuild('Tag Release',currentBuild.result)
+            throw e
+        }
+    }
+}
+
+stage('Deploy') {
+    node {
+        try {
+           def v = version().trim()
+           unstash 'date'
+           def d = readFile('date')
+           def finalVersion = env.BRANCH_NAME == 'master' ? "${v}.${d}" : v
+           dir('course-management-tools') {
+               withCredentials([usernameColonPassword(credentialsId: '800169a4-8a67-46d6-9208-4c42e576b1c7', variable: 'BINTRAY')]) {
+                   sh """
+                       cat target/releases/__REPO__-exercises-v${finalVersion}.zip | curl -X PUT -u ${env.BINTRAY} --data-binary "@-" https://api.bintray.com/content/typesafe/training-materials/__REPO__/${finalVersion}/__REPO__-exercises-v${finalVersion}.zip?override=1
+                       cat target/releases/__REPO__-deck-v${finalVersion}.zip | curl -X PUT -u ${env.BINTRAY} --data-binary "@-" https://api.bintray.com/content/typesafe/training-materials/__REPO__/${finalVersion}/__REPO__-deck-v${finalVersion}.zip?override=1
+                   """
+                   if (env.BRANCH_NAME == 'master') {
+                       sh """
+                           curl -X POST -u ${env.BINTRAY} https://api.bintray.com/content/typesafe/training-materials/__REPO__/${finalVersion}/publish
+                       """
+                   }
+               }
+           }
+
+        } catch (e) {
+            // If there was an exception thrown, the build failed
+            currentBuild.result = "FAILED"
+            throw e
+        } finally {
+            // Success or failure, always send notifications
+            notifyBuild('Deploy', currentBuild.result)
+        }
+    }
+}
+
+
+def version() {
+    def matcher = readFile('__REPO__/version.sbt') =~ '.*:=(.+)'
+    def v = matcher ? matcher[0][1] : "0"
+    env.BRANCH_NAME == 'master' ? v : v + "-SNAPSHOT"
+}
+
+def date() {
+    def dateFormat = new SimpleDateFormat("yyyyMMdd")
+    def date = new Date()
+
+    dateFormat.format(date)
+}
+
+def subject(String step, String buildStatus = 'STARTED'){
+    def recipients = emailextrecipients([[$class: 'CulpritsRecipientProvider'], [$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider'], [$class: 'UpstreamComitterRecipientProvider']])
+    if (buildStatus == 'SUCCESS') {
+        "${env.JOB_NAME} __REPO__ Build Successful ($recipients)"
+    } else {
+        "${env.JOB_NAME} __REPO__ Build ${buildStatus} at $step step ($recipients)"
+    }
+}
+
+def slackSubject(String step, String buildStatus = 'STARTED'){
+    if (buildStatus == 'SUCCESS') {
+        ":white_check_mark: ${subject(step, buildStatus)}"
+    } else {
+        ":exclamation: ${subject(step, buildStatus)}"
+    }
+}
+
+def notifyBuild(String step, String buildStatus = 'STARTED') {
+    // build status of null means successful
+    buildStatus = buildStatus ?: 'SUCCESS'
+
+    // Default values
+    def colorName = 'RED'
+    def colorCode = '#FF0000'
+    def subject = subject(step, buildStatus)
+    def slackSubject = slackSubject(step, buildStatus)
+    def slackSummary = "$slackSubject (${env.BUILD_URL})"
+
+    def body = """
+    ${subject}
+    STARTED: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'
+    Check console output at http://${env.BUILD_URL} ${env.JOB_NAME} [${env.BUILD_NUMBER}]
+    """
+
+    // Override default values based on build status
+    if (buildStatus == 'STARTED') {
+        color = 'YELLOW'
+        colorCode = '#FFFF00'
+    } else if (buildStatus == 'SUCCESS') {
+        color = 'GREEN'
+        colorCode = '#00FF00'
+    } else {
+        color = 'RED'
+        colorCode = '#FF0000'
+    }
+
+    // Send notifications
+    slackSend (color: colorCode, message: slackSummary)
+
+
+    emailext (
+            subject: subject,
+            body: body,
+            recipientProviders: [[$class: 'CulpritsRecipientProvider'],[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider'], [$class: 'UpstreamComitterRecipientProvider']]
+    )
+}
